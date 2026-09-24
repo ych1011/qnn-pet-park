@@ -81,14 +81,14 @@ public class RuleServiceImpl implements RuleService {
 
     @Override
     public void deleteRule(Long id, Long teacherId) {
-        log.info("删除积分规则: id={}, teacherId={}", id, teacherId);
+        log.info("逻辑删除积分规则: id={}, teacherId={}", id, teacherId);
         ScoreRule existing = scoreRuleMapper.selectById(id);
         if (existing == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "规则不存在");
         }
         checkOwnership(existing.getClassId(), teacherId);
         scoreRuleMapper.deleteById(id);
-        log.info("积分规则删除成功: id={}", id);
+        log.info("积分规则逻辑删除成功: id={}", id);
     }
 
     private void checkOwnership(Long classId, Long teacherId) {

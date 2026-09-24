@@ -36,6 +36,34 @@ jwt:
   secret: ${JWT_SECRET:qnn-pet-park-jwt-secret-key-must-be-at-least-32-chars}
   expiration: 86400000
 
+# SpringDoc OpenAPI 配置
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+    enabled: true
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+    tags-sorter: alpha
+    operations-sorter: method
+    doc-expansion: none
+    persist-authorization: true
+
+# Spring Boot Actuator 端点配置
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+  info:
+    env:
+      enabled: true
+
 logging:
   level:
     com.qnnpet: debug

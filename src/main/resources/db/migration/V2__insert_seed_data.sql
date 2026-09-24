@@ -1,7 +1,7 @@
 -- ========================================
 -- 种子数据
 -- 超级管理员账号（用户名: admin，初始密码: admin123，请登录后修改）
--- 注意：下方 password 字段为 BCrypt 占位哈希，如需实际登录请用程序生成的 admin123 哈希替换
+-- 下方 password 字段为 admin123 的真实 BCrypt 哈希（cost=10）
 -- ========================================
 
 -- 6种宠物类型
@@ -13,9 +13,9 @@ INSERT INTO pet_type (code, name, sort_order) VALUES
 ('penguin', '小企鹅', 5),
 ('dragon', '小龙', 6);
 
--- 超管账号（密码: admin123 的 BCrypt 哈希占位符，请登录后修改）
+-- 超管账号（用户名: admin，密码: admin123 的 BCrypt 哈希，cost=10）
 INSERT INTO sys_user (username, password, real_name, role, status) VALUES
-('admin', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68uJ6w0tru8u', '超级管理员', 'admin', 1);
+('admin', '$2a$10$T80H4YwDpOsDv8Rox44yy.t2S3Tp9QO65paCbkbn1V8jiZ2lD.ENq', '超级管理员', 'admin', 1);
 
 -- 30条宠物等级配置（6种 × 5级）
 -- cat (pet_type_id=1)

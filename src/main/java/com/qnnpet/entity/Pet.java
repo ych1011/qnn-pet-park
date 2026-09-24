@@ -3,7 +3,9 @@ package com.qnnpet.entity;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.Version;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -29,6 +31,14 @@ public class Pet {
 
     @TableField("current_score")
     private Integer currentScore;
+
+    @Version
+    @TableField("version")
+    private Integer version;
+
+    @TableLogic
+    @TableField("deleted")
+    private Integer deleted;
 
     @TableField("created_at")
     private LocalDateTime createdAt;

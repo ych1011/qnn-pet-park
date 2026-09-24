@@ -38,6 +38,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * - 撤销最近一次（10 秒内）
  * - 幂等键 TTL 5 分钟
  * - 数据归属校验：teacher 只能操作自己班级的学生
+ * - 乐观锁并发控制：pet 表并发加减分自动重试（max 3 次）
  */
 @Slf4j
 @Service
@@ -53,6 +54,8 @@ public class ScoreServiceImpl implements ScoreService {
     private static final ConcurrentHashMap<String, IdempotentEntry> IDEMPOTENT_CACHE = new ConcurrentHashMap<>();
     private static final long IDEMPOTENT_TTL_MS = 5 * 60 * 1000L;
     private static final int UNDO_WINDOW_SECONDS = 10;
+    private static final int MAX_OPTIMISTIC_RETRY = 3;
+    private static final long RETRY_INTERVAL_MS = 50L;
 
     @Override
     @Transactional
@@ -60,7 +63,6 @@ public class ScoreServiceImpl implements ScoreService {
         log.info("积分操作: teacherId={}, studentId={}, type={}, score={}, ruleName={}, idempotentKey={}",
                 teacherId, request.getStudentId(), request.getType(), request.getScore(),
                 request.getRuleName(), request.getIdempotentKey());
-        // 业务校验：type 必须为 add/subtract（DTO @Pattern 已校验，这里防御性判断）
         if (!"add".equals(request.getType()) && !"subtract".equals(request.getType())) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "类型必须为 add 或 subtract");
         }
@@ -79,26 +81,46 @@ public class ScoreServiceImpl implements ScoreService {
                     request.getStudentId(), teacherId, cls != null ? cls.getTeacherId() : null);
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权操作其他老师的学生");
         }
-        Pet pet = petMapper.selectOne(
-                new QueryWrapper<Pet>().eq("student_id", request.getStudentId()));
-        if (pet == null) {
-            throw new BusinessException(ErrorCode.CONFLICT, "该学生尚未分配宠物，无法记录积分");
-        }
-        int oldScore = pet.getCurrentScore() == null ? 0 : pet.getCurrentScore();
-        int oldLevel = pet.getCurrentLevel() == null ? 1 : pet.getCurrentLevel();
+
+        // 乐观锁重试：并发加减分时 version 冲突自动重试（max 3 次，间隔 50ms）
+        Pet pet = null;
+        int oldScore = 0;
+        int oldLevel = 1;
+        int newScore = 0;
+        int newLevel = 1;
         int delta = "add".equals(request.getType()) ? request.getScore() : -request.getScore();
-        int newScore = oldScore + delta;
-        boolean forceNoDegrade = false;
-        if (newScore < 0) {
-            newScore = 0;
-            forceNoDegrade = true;
-            log.info("扣分后归零（不降级）: studentId={}, oldScore={}, delta={}",
-                    request.getStudentId(), oldScore, delta);
+        for (int attempt = 1; attempt <= MAX_OPTIMISTIC_RETRY; attempt++) {
+            pet = petMapper.selectOne(
+                    new QueryWrapper<Pet>().eq("student_id", request.getStudentId()));
+            if (pet == null) {
+                throw new BusinessException(ErrorCode.CONFLICT, "该学生尚未分配宠物，无法记录积分");
+            }
+            oldScore = pet.getCurrentScore() == null ? 0 : pet.getCurrentScore();
+            oldLevel = pet.getCurrentLevel() == null ? 1 : pet.getCurrentLevel();
+            newScore = oldScore + delta;
+            boolean forceNoDegrade = false;
+            if (newScore < 0) {
+                newScore = 0;
+                forceNoDegrade = true;
+                log.info("扣分后归零（不降级）: studentId={}, oldScore={}, delta={}",
+                        request.getStudentId(), oldScore, delta);
+            }
+            newLevel = forceNoDegrade ? oldLevel : calculateLevel(pet.getPetTypeId(), newScore);
+            pet.setCurrentScore(newScore);
+            pet.setCurrentLevel(newLevel);
+            int rows = petMapper.updateById(pet);
+            if (rows > 0) {
+                break;
+            }
+            if (attempt < MAX_OPTIMISTIC_RETRY) {
+                log.warn("积分更新乐观锁冲突，重试: studentId={}, attempt={}/{}",
+                        request.getStudentId(), attempt, MAX_OPTIMISTIC_RETRY);
+                sleepRetry();
+            } else {
+                log.error("积分更新乐观锁冲突，重试耗尽: studentId={}", request.getStudentId());
+                throw new BusinessException(ErrorCode.CONFLICT, "操作繁忙，请稍后重试");
+            }
         }
-        int newLevel = forceNoDegrade ? oldLevel : calculateLevel(pet.getPetTypeId(), newScore);
-        pet.setCurrentScore(newScore);
-        pet.setCurrentLevel(newLevel);
-        petMapper.updateById(pet);
 
         ScoreLog scoreLog = new ScoreLog();
         scoreLog.setStudentId(request.getStudentId());
@@ -117,7 +139,7 @@ public class ScoreServiceImpl implements ScoreService {
         log.info("积分操作完成: logId={}, studentId={}, oldScore={}, newScore={}, oldLevel={}, newLevel={}, leveledUp={}",
                 scoreLog.getId(), request.getStudentId(), oldScore, newScore, oldLevel, newLevel, leveledUp);
         if (leveledUp) {
-            log.info("宠物升级！studentId={}, petId={}, {} 级 → {} 级",
+            log.info("宠物升级！studentId={}, petId={}, {} 级 -> {} 级",
                     request.getStudentId(), pet.getId(), oldLevel, newLevel);
         }
         return resp;
@@ -148,18 +170,33 @@ public class ScoreServiceImpl implements ScoreService {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "撤销已超时（仅10秒内可撤销）");
             }
         }
-        Pet pet = petMapper.selectOne(
-                new QueryWrapper<Pet>().eq("student_id", latest.getStudentId()));
-        if (pet != null) {
+        // 乐观锁重试：并发撤销时 version 冲突自动重试（max 3 次，间隔 50ms）
+        for (int attempt = 1; attempt <= MAX_OPTIMISTIC_RETRY; attempt++) {
+            Pet pet = petMapper.selectOne(
+                    new QueryWrapper<Pet>().eq("student_id", latest.getStudentId()));
+            if (pet == null) {
+                break;
+            }
             int currentScore = pet.getCurrentScore() == null ? 0 : pet.getCurrentScore();
             int delta = "add".equals(latest.getType()) ? -latest.getScore() : latest.getScore();
             int newScore = currentScore + delta;
             if (newScore < 0) newScore = 0;
             pet.setCurrentScore(newScore);
             pet.setCurrentLevel(calculateLevel(pet.getPetTypeId(), newScore));
-            petMapper.updateById(pet);
+            int rows = petMapper.updateById(pet);
+            if (rows > 0) {
+                break;
+            }
+            if (attempt < MAX_OPTIMISTIC_RETRY) {
+                log.warn("撤销更新乐观锁冲突，重试: studentId={}, attempt={}/{}",
+                        latest.getStudentId(), attempt, MAX_OPTIMISTIC_RETRY);
+                sleepRetry();
+            } else {
+                log.error("撤销更新乐观锁冲突，重试耗尽: studentId={}", latest.getStudentId());
+                throw new BusinessException(ErrorCode.CONFLICT, "操作繁忙，请稍后重试");
+            }
         }
-        scoreLogMapper.deleteById(latest.getId());
+        scoreLogMapper.deleteById(latest.getId()); // MyBatis-Plus @TableLogic: 自动转为 UPDATE score_log SET deleted=1
         log.info("撤销成功: logId={}, studentId={}", latest.getId(), latest.getStudentId());
     }
 
@@ -256,6 +293,17 @@ public class ScoreServiceImpl implements ScoreService {
         if (cls == null || !cls.getTeacherId().equals(teacherId)) {
             log.warn("越权查询积分数据: classId={}, teacherId={}", classId, teacherId);
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权查看其他班级的积分");
+        }
+    }
+
+    /**
+     * 乐观锁冲突重试间隔休眠
+     */
+    private void sleepRetry() {
+        try {
+            Thread.sleep(RETRY_INTERVAL_MS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 

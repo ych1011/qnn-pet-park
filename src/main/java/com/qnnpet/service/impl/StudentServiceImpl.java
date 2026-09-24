@@ -83,17 +83,17 @@ public class StudentServiceImpl implements StudentService {
     @Override
     @Transactional
     public void deleteStudent(Long id, Long teacherId) {
-        log.info("删除学生: id={}, teacherId={}", id, teacherId);
+        log.info("逻辑删除学生: id={}, teacherId={}", id, teacherId);
         Student student = studentMapper.selectById(id);
         if (student == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "学生不存在");
         }
         checkOwnership(student.getClassId(), teacherId);
-        // 级联删除 pet + score_log（PRD §5.4）
+        // 级联逻辑删除 pet + score_log（PRD §5.4，MyBatis-Plus @TableLogic 自动转 UPDATE SET deleted=1）
         petMapper.delete(new QueryWrapper<Pet>().eq("student_id", id));
         scoreLogMapper.delete(new QueryWrapper<ScoreLog>().eq("student_id", id));
         studentMapper.deleteById(id);
-        log.info("学生删除成功（含级联宠物和积分记录）: id={}", id);
+        log.info("学生逻辑删除成功（含级联宠物和积分记录）: id={}", id);
     }
 
     private void checkOwnership(Long classId, Long teacherId) {

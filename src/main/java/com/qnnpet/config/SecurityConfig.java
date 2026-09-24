@@ -47,6 +47,12 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/auth/**").permitAll()
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                // SpringDoc OpenAPI / Swagger UI 放行
+                .requestMatchers("/v3/api-docs/**").permitAll()
+                .requestMatchers("/swagger-ui/**").permitAll()
+                .requestMatchers("/swagger-ui.html").permitAll()
+                // Spring Boot Actuator 监控端点放行
+                .requestMatchers("/actuator/**").permitAll()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .requestMatchers("/api/teacher/**").hasRole("TEACHER")
                 .anyRequest().authenticated()
