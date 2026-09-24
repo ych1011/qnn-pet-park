@@ -30,6 +30,7 @@ public class AdminUserController {
         return Result.success(userService.listTeachers());
     }
 
+    
     @PostMapping
     public Result<Object> create(@Valid @RequestBody CreateTeacherRequest request) {
         log.info("管理员创建老师: username={}, realName={}", request.getUsername(), request.getRealName());
