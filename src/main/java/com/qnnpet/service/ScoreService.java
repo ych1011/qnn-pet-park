@@ -12,7 +12,7 @@ public interface ScoreService {
 
     void undoLatestScore(Long teacherId);
 
-    List<Map<String, Object>> getRanking(Long classId);
+    List<Map<String, Object>> getRanking(Long classId, Long teacherId);
 
-    Map<String, Object> getScoreLogs(Long studentId, Integer page, Integer size);
+    Map<String, Object> getScoreLogs(Long studentId, Integer page, Integer size, Long teacherId);
 }

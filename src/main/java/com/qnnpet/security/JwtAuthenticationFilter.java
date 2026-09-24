@@ -32,19 +32,23 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
         String token = resolveToken(request);
-        if (StringUtils.hasText(token) && jwtTokenProvider.validateToken(token)) {
-            try {
-                Claims claims = jwtTokenProvider.parseToken(token);
-                Long userId = Long.parseLong(claims.getSubject());
-                String role = claims.get("role", String.class);
-                String authority = "ROLE_" + role.toUpperCase();
-                UsernamePasswordAuthenticationToken auth =
-                        new UsernamePasswordAuthenticationToken(userId, null,
-                                List.of(new SimpleGrantedAuthority(authority)));
-                SecurityContextHolder.getContext().setAuthentication(auth);
-            } catch (Exception e) {
-                log.debug("Token 解析失败: {}", e.getMessage());
-                SecurityContextHolder.clearContext();
+        if (StringUtils.hasText(token)) {
+            if (!jwtTokenProvider.validateToken(token)) {
+                log.warn("JWT 校验失败: uri={}", request.getRequestURI());
+            } else {
+                try {
+                    Claims claims = jwtTokenProvider.parseToken(token);
+                    Long userId = Long.parseLong(claims.getSubject());
+                    String role = claims.get("role", String.class);
+                    String authority = "ROLE_" + role.toUpperCase();
+                    UsernamePasswordAuthenticationToken auth =
+                            new UsernamePasswordAuthenticationToken(userId, null,
+                                    List.of(new SimpleGrantedAuthority(authority)));
+                    SecurityContextHolder.getContext().setAuthentication(auth);
+                } catch (Exception e) {
+                    log.warn("Token 解析失败: uri={}, reason={}", request.getRequestURI(), e.getMessage());
+                    SecurityContextHolder.clearContext();
+                }
             }
         }
         filterChain.doFilter(request, response);

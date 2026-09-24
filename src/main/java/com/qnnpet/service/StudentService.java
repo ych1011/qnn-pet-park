@@ -7,7 +7,7 @@ import java.util.List;
 
 public interface StudentService {
 
-    List<Student> listStudents(Long classId);
+    List<Student> listStudents(Long classId, Long teacherId);
 
     Student createStudent(CreateStudentRequest request, Long teacherId);
 

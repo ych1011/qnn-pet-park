@@ -8,13 +8,21 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
+/**
+ * 积分规则请求 DTO（PRD §5.6）
+ * - 分值 1-99 正整数
+ * - 类型 add/subtract
+ * - 分类 study/discipline/habit/morality
+ */
 @Data
-public class AddScoreRequest {
+public class RuleRequest {
 
-    @NotNull(message = "学生ID不能为空")
-    private Long studentId;
+    @NotNull(message = "班级ID不能为空")
+    private Long classId;
 
-    private Long ruleId;
+    @NotBlank(message = "规则名称不能为空")
+    @Size(min = 1, max = 100, message = "规则名称长度1-100字符")
+    private String name;
 
     @NotBlank(message = "类型不能为空")
     @Pattern(regexp = "^(add|subtract)$", message = "类型必须为 add 或 subtract")
@@ -25,13 +33,11 @@ public class AddScoreRequest {
     @Max(value = 99, message = "分值最大99")
     private Integer score;
 
-    @NotBlank(message = "规则名称不能为空")
-    @Size(min = 1, max = 100, message = "规则名称长度1-100字符")
-    private String ruleName;
+    @NotBlank(message = "分类不能为空")
+    @Pattern(regexp = "^(study|discipline|habit|morality)$", message = "分类必须为 study/discipline/habit/morality")
+    private String category;
 
-    @Size(max = 255, message = "备注最长255字符")
-    private String remark;
+    private Integer sortOrder;
 
-    @NotBlank(message = "幂等键不能为空")
-    private String idempotentKey;
+    private Integer status;
 }

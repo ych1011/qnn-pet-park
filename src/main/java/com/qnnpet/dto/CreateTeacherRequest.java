@@ -1,6 +1,7 @@
 package com.qnnpet.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -8,7 +9,8 @@ import lombok.Data;
 public class CreateTeacherRequest {
 
     @NotBlank(message = "用户名不能为空")
-    @Size(min = 3, max = 50, message = "用户名长度3-50字符，字母数字下划线")
+    @Size(min = 3, max = 50, message = "用户名长度3-50字符")
+    @Pattern(regexp = "^[a-zA-Z0-9_]+$", message = "用户名只能包含字母、数字、下划线")
     private String username;
 
     @NotBlank(message = "真实姓名不能为空")

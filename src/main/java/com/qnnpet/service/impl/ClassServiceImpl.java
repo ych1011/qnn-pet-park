@@ -9,6 +9,7 @@ import com.qnnpet.mapper.ClassInfoMapper;
 import com.qnnpet.mapper.ScoreRuleMapper;
 import com.qnnpet.service.ClassService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,6 +21,7 @@ import java.util.List;
  * - 一个老师只能有一个班级
  * - 创建班级时自动初始化 10 条默认规则（PRD §5.6）
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ClassServiceImpl implements ClassService {
@@ -29,6 +31,7 @@ public class ClassServiceImpl implements ClassService {
 
     @Override
     public ClassInfo getCurrentClass(Long teacherId) {
+        log.info("查询当前班级: teacherId={}", teacherId);
         ClassInfo cls = classInfoMapper.selectOne(
                 new QueryWrapper<ClassInfo>().eq("teacher_id", teacherId));
         if (cls == null) {
@@ -40,30 +43,38 @@ public class ClassServiceImpl implements ClassService {
     @Override
     @Transactional
     public ClassInfo createClass(ClassInfo classInfo, Long teacherId) {
+        log.info("创建班级: teacherId={}, name={}", teacherId, classInfo.getName());
         ClassInfo existing = classInfoMapper.selectOne(
                 new QueryWrapper<ClassInfo>().eq("teacher_id", teacherId));
         if (existing != null) {
+            log.warn("创建班级失败-已存在班级: teacherId={}", teacherId);
             throw new BusinessException(ErrorCode.CONFLICT, "每个老师只能创建一个班级");
         }
         classInfo.setTeacherId(teacherId);
         classInfoMapper.insert(classInfo);
         initDefaultRules(classInfo.getId());
+        log.info("班级创建成功: id={}, teacherId={}", classInfo.getId(), teacherId);
         return classInfo;
     }
 
     @Override
+    @Transactional
     public ClassInfo updateClass(Long id, ClassInfo classInfo, Long teacherId) {
+        log.info("更新班级: id={}, teacherId={}", id, teacherId);
         ClassInfo existing = classInfoMapper.selectById(id);
         if (existing == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "班级不存在");
         }
         if (!existing.getTeacherId().equals(teacherId)) {
+            log.warn("越权操作班级: id={}, teacherId={}, 班级归属={}",
+                    id, teacherId, existing.getTeacherId());
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权操作其他老师的班级");
         }
         existing.setName(classInfo.getName());
         existing.setGrade(classInfo.getGrade());
         existing.setSemester(classInfo.getSemester());
         classInfoMapper.updateById(existing);
+        log.info("班级更新成功: id={}", id);
         return existing;
     }
 
@@ -86,6 +97,7 @@ public class ClassServiceImpl implements ClassService {
         for (ScoreRule rule : defaults) {
             scoreRuleMapper.insert(rule);
         }
+        log.info("默认积分规则初始化完成: classId={}, 规则数={}", classId, defaults.size());
     }
 
     private ScoreRule buildRule(Long classId, String name, String type, int score, String category, int sortOrder) {

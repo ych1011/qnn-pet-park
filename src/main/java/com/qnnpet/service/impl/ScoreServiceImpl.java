@@ -18,6 +18,7 @@ import com.qnnpet.mapper.ScoreLogMapper;
 import com.qnnpet.mapper.StudentMapper;
 import com.qnnpet.service.ScoreService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,7 +37,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * - 扣分后为负则归 0，等级不降级
  * - 撤销最近一次（10 秒内）
  * - 幂等键 TTL 5 分钟
+ * - 数据归属校验：teacher 只能操作自己班级的学生
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ScoreServiceImpl implements ScoreService {
@@ -54,8 +57,16 @@ public class ScoreServiceImpl implements ScoreService {
     @Override
     @Transactional
     public AddScoreResponse addScore(AddScoreRequest request, Long teacherId) {
+        log.info("积分操作: teacherId={}, studentId={}, type={}, score={}, ruleName={}, idempotentKey={}",
+                teacherId, request.getStudentId(), request.getType(), request.getScore(),
+                request.getRuleName(), request.getIdempotentKey());
+        // 业务校验：type 必须为 add/subtract（DTO @Pattern 已校验，这里防御性判断）
+        if (!"add".equals(request.getType()) && !"subtract".equals(request.getType())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "类型必须为 add 或 subtract");
+        }
         AddScoreResponse cached = checkIdempotent(request.getIdempotentKey());
         if (cached != null) {
+            log.info("命中幂等缓存，返回上次结果: idempotentKey={}", request.getIdempotentKey());
             return cached;
         }
         Student student = studentMapper.selectById(request.getStudentId());
@@ -64,6 +75,8 @@ public class ScoreServiceImpl implements ScoreService {
         }
         ClassInfo cls = classInfoMapper.selectById(student.getClassId());
         if (cls == null || !cls.getTeacherId().equals(teacherId)) {
+            log.warn("越权操作学生积分: studentId={}, teacherId={}, 班级归属={}",
+                    request.getStudentId(), teacherId, cls != null ? cls.getTeacherId() : null);
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权操作其他老师的学生");
         }
         Pet pet = petMapper.selectOne(
@@ -79,32 +92,41 @@ public class ScoreServiceImpl implements ScoreService {
         if (newScore < 0) {
             newScore = 0;
             forceNoDegrade = true;
+            log.info("扣分后归零（不降级）: studentId={}, oldScore={}, delta={}",
+                    request.getStudentId(), oldScore, delta);
         }
         int newLevel = forceNoDegrade ? oldLevel : calculateLevel(pet.getPetTypeId(), newScore);
         pet.setCurrentScore(newScore);
         pet.setCurrentLevel(newLevel);
         petMapper.updateById(pet);
 
-        ScoreLog log = new ScoreLog();
-        log.setStudentId(request.getStudentId());
-        log.setClassId(cls.getId());
-        log.setRuleId(request.getRuleId());
-        log.setRuleName(request.getRuleName());
-        log.setType(request.getType());
-        log.setScore(request.getScore());
-        log.setRemark(request.getRemark());
-        scoreLogMapper.insert(log);
+        ScoreLog scoreLog = new ScoreLog();
+        scoreLog.setStudentId(request.getStudentId());
+        scoreLog.setClassId(cls.getId());
+        scoreLog.setRuleId(request.getRuleId());
+        scoreLog.setRuleName(request.getRuleName());
+        scoreLog.setType(request.getType());
+        scoreLog.setScore(request.getScore());
+        scoreLog.setRemark(request.getRemark());
+        scoreLogMapper.insert(scoreLog);
 
         boolean leveledUp = newLevel > oldLevel;
         AddScoreResponse resp = new AddScoreResponse(
-                log.getId(), newScore, newLevel, leveledUp, leveledUp ? oldLevel : null);
+                scoreLog.getId(), newScore, newLevel, leveledUp, leveledUp ? oldLevel : null);
         cacheIdempotent(request.getIdempotentKey(), resp);
+        log.info("积分操作完成: logId={}, studentId={}, oldScore={}, newScore={}, oldLevel={}, newLevel={}, leveledUp={}",
+                scoreLog.getId(), request.getStudentId(), oldScore, newScore, oldLevel, newLevel, leveledUp);
+        if (leveledUp) {
+            log.info("宠物升级！studentId={}, petId={}, {} 级 → {} 级",
+                    request.getStudentId(), pet.getId(), oldLevel, newLevel);
+        }
         return resp;
     }
 
     @Override
     @Transactional
     public void undoLatestScore(Long teacherId) {
+        log.info("撤销最近一次积分操作: teacherId={}", teacherId);
         ClassInfo cls = classInfoMapper.selectOne(
                 new QueryWrapper<ClassInfo>().eq("teacher_id", teacherId));
         if (cls == null) {
@@ -121,6 +143,8 @@ public class ScoreServiceImpl implements ScoreService {
         if (latest.getCreatedAt() != null) {
             long elapsed = Duration.between(latest.getCreatedAt(), LocalDateTime.now()).getSeconds();
             if (elapsed > UNDO_WINDOW_SECONDS) {
+                log.warn("撤销失败-超时: logId={}, elapsed={}s, window={}s",
+                        latest.getId(), elapsed, UNDO_WINDOW_SECONDS);
                 throw new BusinessException(ErrorCode.FORBIDDEN, "撤销已超时（仅10秒内可撤销）");
             }
         }
@@ -136,10 +160,13 @@ public class ScoreServiceImpl implements ScoreService {
             petMapper.updateById(pet);
         }
         scoreLogMapper.deleteById(latest.getId());
+        log.info("撤销成功: logId={}, studentId={}", latest.getId(), latest.getStudentId());
     }
 
     @Override
-    public List<Map<String, Object>> getRanking(Long classId) {
+    public List<Map<String, Object>> getRanking(Long classId, Long teacherId) {
+        log.info("查询积分排行: classId={}, teacherId={}", classId, teacherId);
+        checkOwnership(classId, teacherId);
         List<Student> students = studentMapper.selectList(
                 new QueryWrapper<Student>().eq("class_id", classId).orderByAsc("sort_order"));
         if (students.isEmpty()) {
@@ -167,11 +194,18 @@ public class ScoreServiceImpl implements ScoreService {
             row.put("currentScore", p.getCurrentScore());
             ranking.add(row);
         }
+        log.info("排行查询完成: classId={}, 学生数={}", classId, ranking.size());
         return ranking;
     }
 
     @Override
-    public Map<String, Object> getScoreLogs(Long studentId, Integer page, Integer size) {
+    public Map<String, Object> getScoreLogs(Long studentId, Integer page, Integer size, Long teacherId) {
+        log.info("查询积分记录: studentId={}, page={}, size={}, teacherId={}", studentId, page, size, teacherId);
+        Student student = studentMapper.selectById(studentId);
+        if (student == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "学生不存在");
+        }
+        checkOwnership(student.getClassId(), teacherId);
         Page<ScoreLog> p = new Page<>(page, size);
         var result = scoreLogMapper.selectPage(p,
                 new QueryWrapper<ScoreLog>()
@@ -182,6 +216,7 @@ public class ScoreServiceImpl implements ScoreService {
         resp.put("page", page);
         resp.put("size", size);
         resp.put("list", result.getRecords());
+        log.info("积分记录查询完成: studentId={}, total={}", studentId, result.getTotal());
         return resp;
     }
 
@@ -213,6 +248,14 @@ public class ScoreServiceImpl implements ScoreService {
     private void cacheIdempotent(String key, AddScoreResponse resp) {
         if (key != null) {
             IDEMPOTENT_CACHE.put(key, new IdempotentEntry(resp, System.currentTimeMillis()));
+        }
+    }
+
+    private void checkOwnership(Long classId, Long teacherId) {
+        ClassInfo cls = classInfoMapper.selectById(classId);
+        if (cls == null || !cls.getTeacherId().equals(teacherId)) {
+            log.warn("越权查询积分数据: classId={}, teacherId={}", classId, teacherId);
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权查看其他班级的积分");
         }
     }
 

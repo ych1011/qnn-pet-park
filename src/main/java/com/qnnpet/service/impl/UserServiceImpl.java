@@ -8,6 +8,7 @@ import com.qnnpet.entity.SysUser;
 import com.qnnpet.mapper.SysUserMapper;
 import com.qnnpet.service.UserService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -24,6 +25,7 @@ import java.util.Map;
  * - 不能禁用自己
  * - 禁用后数据保留
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class UserServiceImpl implements UserService {
@@ -36,6 +38,7 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public List<SysUser> listTeachers() {
+        log.info("查询老师列表");
         return sysUserMapper.selectList(
                 new QueryWrapper<SysUser>()
                         .eq("role", "teacher")
@@ -46,6 +49,7 @@ public class UserServiceImpl implements UserService {
     public Object createTeacher(CreateTeacherRequest request) {
         SysUser existing = sysUserMapper.selectByUsername(request.getUsername());
         if (existing != null) {
+            log.warn("创建老师失败-用户名已存在: username={}", request.getUsername());
             throw new BusinessException(ErrorCode.CONFLICT, "该用户名已被使用");
         }
         String rawPassword = generateRandomPassword();
@@ -56,6 +60,8 @@ public class UserServiceImpl implements UserService {
         teacher.setRole("teacher");
         teacher.setStatus(1);
         sysUserMapper.insert(teacher);
+        log.info("老师创建成功: id={}, username={}, realName={}",
+                teacher.getId(), teacher.getUsername(), teacher.getRealName());
         Map<String, Object> result = new HashMap<>();
         result.put("id", teacher.getId());
         result.put("username", teacher.getUsername());
@@ -70,6 +76,7 @@ public class UserServiceImpl implements UserService {
         if (auth != null && auth.getPrincipal() instanceof Long) {
             Long currentUserId = (Long) auth.getPrincipal();
             if (id.equals(currentUserId)) {
+                log.warn("禁用自己失败-不能禁用自己的账号: currentUserId={}", currentUserId);
                 throw new BusinessException(ErrorCode.FORBIDDEN, "不能禁用自己的账号");
             }
         }
@@ -77,8 +84,13 @@ public class UserServiceImpl implements UserService {
         if (user == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "用户不存在");
         }
+        if ("admin".equals(user.getRole())) {
+            log.warn("操作失败-不能修改管理员账号: id={}, role={}", id, user.getRole());
+            throw new BusinessException(ErrorCode.FORBIDDEN, "不能修改管理员账号");
+        }
         user.setStatus(status);
         sysUserMapper.updateById(user);
+        log.info("老师状态更新成功: id={}, username={}, newStatus={}", id, user.getUsername(), status);
     }
 
     @Override
@@ -87,9 +99,14 @@ public class UserServiceImpl implements UserService {
         if (user == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "用户不存在");
         }
+        if ("admin".equals(user.getRole())) {
+            log.warn("操作失败-不能重置管理员密码: id={}", id);
+            throw new BusinessException(ErrorCode.FORBIDDEN, "不能重置管理员密码");
+        }
         String rawPassword = generateRandomPassword();
         user.setPassword(passwordEncoder.encode(rawPassword));
         sysUserMapper.updateById(user);
+        log.info("老师密码重置成功: id={}, username={}", id, user.getUsername());
         return rawPassword;
     }
 

@@ -16,6 +16,7 @@ import com.qnnpet.mapper.PetTypeMapper;
 import com.qnnpet.mapper.StudentMapper;
 import com.qnnpet.service.PetService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -24,7 +25,9 @@ import java.util.List;
  * 宠物系统服务实现（PRD §5.5）
  * - 6 种宠物类型 × 5 等级
  * - 更换宠物重置 level=1，保留 score
+ * - 数据归属校验：teacher 只能操作自己班级的学生宠物
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PetServiceImpl implements PetService {
@@ -37,21 +40,24 @@ public class PetServiceImpl implements PetService {
 
     @Override
     public List<PetType> listPetTypes() {
+        log.info("查询宠物类型列表");
         return petTypeMapper.selectList(
                 new QueryWrapper<PetType>().orderByAsc("sort_order"));
     }
 
     @Override
-    public List<Object> listPetLevels(Long petTypeId) {
-        List<PetLevelConfig> list = petLevelConfigMapper.selectList(
+    public List<PetLevelConfig> listPetLevels(Long petTypeId) {
+        log.info("查询宠物等级配置: petTypeId={}", petTypeId);
+        return petLevelConfigMapper.selectList(
                 new QueryWrapper<PetLevelConfig>()
                         .eq("pet_type_id", petTypeId)
                         .orderByAsc("level"));
-        return List.copyOf(list);
     }
 
     @Override
     public Pet assignPet(AssignPetRequest request, Long teacherId) {
+        log.info("分配宠物: teacherId={}, studentId={}, petTypeId={}",
+                teacherId, request.getStudentId(), request.getPetTypeId());
         Student student = studentMapper.selectById(request.getStudentId());
         if (student == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "学生不存在");
@@ -72,11 +78,14 @@ public class PetServiceImpl implements PetService {
         pet.setCurrentLevel(1);
         pet.setCurrentScore(0);
         petMapper.insert(pet);
+        log.info("宠物分配成功: petId={}, studentId={}, petTypeId={}",
+                pet.getId(), request.getStudentId(), request.getPetTypeId());
         return pet;
     }
 
     @Override
     public Pet updatePet(Long id, AssignPetRequest request, Long teacherId) {
+        log.info("更新宠物: id={}, teacherId={}, studentId={}", id, teacherId, request.getStudentId());
         Pet pet = petMapper.selectById(id);
         if (pet == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "宠物不存在");
@@ -92,16 +101,24 @@ public class PetServiceImpl implements PetService {
             }
             pet.setPetTypeId(request.getPetTypeId());
             pet.setCurrentLevel(1); // 更换类型形态变回蛋，保留积分（PRD §5.5）
+            log.info("宠物类型更换: petId={}, newPetTypeId={}", id, request.getPetTypeId());
         }
         if (request.getCustomName() != null) {
             pet.setCustomName(request.getCustomName());
         }
         petMapper.updateById(pet);
+        log.info("宠物更新成功: id={}", id);
         return pet;
     }
 
     @Override
-    public Pet getStudentPet(Long studentId) {
+    public Pet getStudentPet(Long studentId, Long teacherId) {
+        log.info("查询学生宠物: studentId={}, teacherId={}", studentId, teacherId);
+        Student student = studentMapper.selectById(studentId);
+        if (student == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "学生不存在");
+        }
+        checkOwnership(student.getClassId(), teacherId);
         Pet pet = petMapper.selectOne(
                 new QueryWrapper<Pet>().eq("student_id", studentId));
         if (pet == null) {
@@ -113,6 +130,7 @@ public class PetServiceImpl implements PetService {
     private void checkOwnership(Long classId, Long teacherId) {
         ClassInfo cls = classInfoMapper.selectById(classId);
         if (cls == null || !cls.getTeacherId().equals(teacherId)) {
+            log.warn("越权操作宠物数据: classId={}, teacherId={}", classId, teacherId);
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权操作其他老师的学生");
         }
     }
