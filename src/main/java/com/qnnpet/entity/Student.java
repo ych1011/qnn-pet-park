@@ -37,4 +37,8 @@ public class Student {
 
     @TableField("updated_at")
     private LocalDateTime updatedAt;
+
+    // 关联宠物信息（非数据库字段，列表查询时填充）
+    @TableField(exist = false)
+    private Pet pet;
 }

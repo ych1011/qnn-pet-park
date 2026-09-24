@@ -106,6 +106,7 @@ public class DisplayServiceImpl implements DisplayService {
                 row.put("petTypeId", p.getPetTypeId());
                 PetType pt = typeMap.get(p.getPetTypeId());
                 row.put("petTypeName", pt != null ? pt.getName() : null);
+                row.put("petTypeCode", pt != null ? pt.getCode() : null);
                 row.put("customName", p.getCustomName());
                 row.put("currentLevel", p.getCurrentLevel());
                 row.put("currentScore", p.getCurrentScore());

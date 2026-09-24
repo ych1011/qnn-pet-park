@@ -6,10 +6,12 @@ import com.qnnpet.common.ErrorCode;
 import com.qnnpet.dto.CreateStudentRequest;
 import com.qnnpet.entity.ClassInfo;
 import com.qnnpet.entity.Pet;
+import com.qnnpet.entity.PetType;
 import com.qnnpet.entity.ScoreLog;
 import com.qnnpet.entity.Student;
 import com.qnnpet.mapper.ClassInfoMapper;
 import com.qnnpet.mapper.PetMapper;
+import com.qnnpet.mapper.PetTypeMapper;
 import com.qnnpet.mapper.ScoreLogMapper;
 import com.qnnpet.mapper.StudentMapper;
 import com.qnnpet.service.StudentService;
@@ -19,6 +21,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * 学生管理服务实现（PRD §5.4）
@@ -33,16 +37,40 @@ public class StudentServiceImpl implements StudentService {
     private final StudentMapper studentMapper;
     private final ClassInfoMapper classInfoMapper;
     private final PetMapper petMapper;
+    private final PetTypeMapper petTypeMapper;
     private final ScoreLogMapper scoreLogMapper;
 
     @Override
     public List<Student> listStudents(Long classId, Long teacherId) {
         log.info("查询学生列表: classId={}, teacherId={}", classId, teacherId);
         checkOwnership(classId, teacherId);
-        return studentMapper.selectList(
+        List<Student> students = studentMapper.selectList(
                 new QueryWrapper<Student>()
                         .eq("class_id", classId)
                         .orderByAsc("sort_order"));
+        if (students.isEmpty()) {
+            return students;
+        }
+        // 批量查询宠物信息并关联到学生
+        List<Long> studentIds = students.stream().map(Student::getId).collect(Collectors.toList());
+        List<Pet> pets = petMapper.selectList(
+                new QueryWrapper<Pet>().in("student_id", studentIds));
+        if (!pets.isEmpty()) {
+            // 批量查询宠物类型
+            List<Long> petTypeIds = pets.stream().map(Pet::getPetTypeId).distinct().collect(Collectors.toList());
+            Map<Long, PetType> petTypeMap = petTypeMapper.selectBatchIds(petTypeIds).stream()
+                    .collect(Collectors.toMap(PetType::getId, pt -> pt));
+            // 关联 petType 到 pet
+            for (Pet pet : pets) {
+                pet.setPetType(petTypeMap.get(pet.getPetTypeId()));
+            }
+        }
+        // 按 studentId 分组，关联到学生
+        Map<Long, Pet> petMap = pets.stream().collect(Collectors.toMap(Pet::getStudentId, p -> p, (a, b) -> a));
+        for (Student s : students) {
+            s.setPet(petMap.get(s.getId()));
+        }
+        return students;
     }
 
     @Override

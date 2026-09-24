@@ -45,4 +45,8 @@ public class Pet {
 
     @TableField("updated_at")
     private LocalDateTime updatedAt;
+
+    // 关联宠物类型信息（非数据库字段，查询时填充）
+    @TableField(exist = false)
+    private PetType petType;
 }
