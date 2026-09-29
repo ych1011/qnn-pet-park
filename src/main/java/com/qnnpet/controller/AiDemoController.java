@@ -15,6 +15,7 @@ public class AiDemoController {
 
     @GetMapping("/chat")
     public String chat(@RequestParam String prompt) {
+
         return aiDemoService.chat(prompt);
     }
 
